@@ -1,0 +1,16 @@
+# Adobe After Effects SDK (not redistributable)
+SDK/
+
+# build output
+build/
+*.obj
+*.exp
+*.lib
+*.pdb
+
+# local-only tools
+tools/
+install.bat
+
+# logs written here by other AE plug-ins
+*-log.txt
