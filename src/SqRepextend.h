@@ -30,6 +30,7 @@ enum {
 	SQ_EXPAND_BOUNDS,
 	SQ_LICENSE_START,
 	SQ_LICENSE_END,
+	SQ_EXTEND_FROM,			// added in v1.2; appended so v1.1 projects keep their parameter indices
 	SQ_NUM_PARAMS
 };
 
@@ -37,6 +38,11 @@ enum {
 	SHAPE_SQUARE = 1,
 	SHAPE_CIRCLE,
 	SHAPE_DIAMOND
+};
+
+enum {
+	EXTEND_FROM_BOUNDING_BOX = 1,
+	EXTEND_FROM_ALPHA
 };
 
 enum {

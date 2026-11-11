@@ -31,6 +31,7 @@ After Effects 用エフェクトプラグインです。Nuke の EdgeExtend の�
 | Output | Original Over Extension：元画像を伸長部分の上に合成<br>Replace Below Threshold：しきい値未満のピクセルを置き換え<br>Extension Only：伸長部分だけを出力 |
 | Opaque Fill | 伸長部分を不透明にする |
 | Expand Layer Bounds | レイヤー範囲の外まで広げる |
+| Extend From | Bounding Box：CC Repetile と同様に、レイヤーのバウンディングボックスの外側だけを境界ピクセルの色で埋める（内側の透明部分はそのまま）<br>Alpha：アルファ領域全体を広げ、透明部分も最寄りの不透明ピクセルの色で埋める |
 
 ## ソースからのビルド
 
@@ -73,6 +74,7 @@ An effect plug-in for After Effects. Like Nuke's EdgeExtend, it grows the alpha 
 | Output | Original Over Extension: composite the original over the extension<br>Replace Below Threshold: replace pixels below the threshold<br>Extension Only: output only the extended area |
 | Opaque Fill | Make the extended area fully opaque |
 | Expand Layer Bounds | Extend beyond the layer bounds |
+| Extend From | Bounding Box: like CC Repetile, fill only outside the layer's bounding box with the color of its edge pixels (transparent areas inside are left as they are)<br>Alpha: grow the whole alpha area, filling transparent pixels with the color of the nearest opaque pixel |
 
 ### Building from source
 

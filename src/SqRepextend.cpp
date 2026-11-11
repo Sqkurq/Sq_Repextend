@@ -10,6 +10,10 @@
 //       Diamond : running minimum of h - t/s                   (d = h + dy/s)
 //       Square  : monotone stack + binary search               (d = max(h, dy/s))
 //   then composites and writes the output pixels of that column block.
+//
+// Extend From = Bounding Box (Repetile-like): only pixels outside the input layer's rect are filled,
+// each with the input pixel it clamps to on that rect's edge. For a rectangle the clamped point is the
+// nearest one under all three shapes, so this is a single O(pixels) pass with no distance transform.
 
 #include "SqRepextend.h"
 
@@ -46,6 +50,7 @@ struct Params {
 	A_long	output;
 	bool	opaqueFill;
 	bool	expandBounds;
+	A_long	extendFrom;
 };
 
 struct RenderData {
@@ -53,6 +58,7 @@ struct RenderData {
 	A_long	reachR, reachL, reachD, reachU;
 	PF_LRect inRect;					// layer-space rect of the checked-out input
 	PF_LRect outRect;					// layer-space rect of the output buffer
+	PF_LRect boxRect;					// layer-space rect of the whole input layer (Bounding Box mode)
 };
 
 void DeleteRenderData(void *data)
@@ -536,6 +542,71 @@ PF_Err VerticalPass(void *refcon, A_long /*thread*/, A_long block, A_long /*iter
 	return PF_Err_NONE;
 }
 
+// Bounding Box mode, one block of output rows.
+template <typename P>
+PF_Err BoxPass(void *refcon, A_long /*thread*/, A_long block, A_long /*iterations*/)
+{
+	Context<P> &c = *reinterpret_cast<Context<P> *>(refcon);
+	const RenderData &rd = *c.rd;
+	const Params &p = rd.p;
+	const PF_LRect &box = rd.boxRect;
+	const A_long y0 = block * kBlock;
+	const A_long y1 = std::min(c.H, y0 + kBlock);
+	const double invD = rd.reachD > 0 ? 1.0 / p.down : 0.0;
+	const double invU = rd.reachU > 0 ? 1.0 / p.up : 0.0;
+
+	for (A_long y = y0; y < y1; ++y) {
+		const A_long ly = y + rd.outRect.top;
+		const A_long dy = ly < box.top ? box.top - ly : ly >= box.bottom ? ly - (box.bottom - 1) : 0;
+		const A_long reachY = ly < box.top ? rd.reachU : rd.reachD;
+		const double ny = dy * (ly < box.top ? invU : invD);
+		const A_long yi = std::min(std::max(ly, box.top), box.bottom - 1) - rd.inRect.top;
+		const A_long oyi = y + c.offY;
+		const P *srcRow = (c.in && yi >= 0 && yi < c.Hi) ? Row<P>(c.in, yi) : nullptr;
+		const P *origRow = (c.in && oyi >= 0 && oyi < c.Hi) ? Row<P>(c.in, oyi) : nullptr;
+		P *dst = Row<P>(c.out, y);
+
+		for (A_long x = 0; x < c.W; ++x) {
+			const A_long lx = x + rd.outRect.left;
+			const A_long xi = x + c.offX;
+			P orig;
+			if (origRow && xi >= 0 && xi < c.Wi) {
+				orig = Sanitize(origRow[xi]);
+			} else {
+				std::memset(&orig, 0, sizeof(orig));
+			}
+
+			const A_long dx = lx < box.left ? box.left - lx : lx >= box.right ? lx - (box.right - 1) : 0;
+			bool filled = false;
+			if ((dx > 0 || dy > 0) && dy <= reachY && dx <= (lx < box.left ? rd.reachL : rd.reachR)) {
+				const double nx = dx * (lx < box.left ? c.invL : c.invR);
+				double d;
+				switch (p.shape) {
+					case SHAPE_SQUARE:	d = std::max(nx, ny);		break;
+					case SHAPE_DIAMOND:	d = nx + ny;				break;
+					default:			d = nx * nx + ny * ny;		break;
+				}
+				filled = d <= 1.0 + kFillEps;
+			}
+
+			P ext;
+			std::memset(&ext, 0, sizeof(ext));
+			if (filled) {
+				const A_long sx = std::min(std::max(lx, box.left), box.right - 1) - rd.inRect.left;
+				if (srcRow && sx >= 0 && sx < c.Wi) {
+					ext = Sanitize(srcRow[sx]);
+				}
+				// only edge pixels that count as sources go opaque, so transparent edges stay transparent
+				if (p.opaqueFill && c.IsSource(ext)) {
+					ext.alpha = FromFloat<P>(1.0f);
+				}
+			}
+			dst[x] = Composite(p, orig, c.IsSource(orig), filled, ext);
+		}
+	}
+	return PF_Err_NONE;
+}
+
 // Runs fn over [0, count) on AE's worker threads, or serially if the suite is unavailable.
 PF_Err Iterate(PF_InData *in_data, A_long count, void *refcon,
 	PF_Err (*fn)(void *, A_long, A_long, A_long))
@@ -591,6 +662,10 @@ PF_Err RenderDepth(PF_InData *in_data, const RenderData &rd, const PF_EffectWorl
 	c.offY	= rd.outRect.top - rd.inRect.top;
 	c.invR	= rd.reachR > 0 ? 1.0 / rd.p.right : 0.0;
 	c.invL	= rd.reachL > 0 ? 1.0 / rd.p.left : 0.0;
+
+	if (rd.p.extendFrom == EXTEND_FROM_BOUNDING_BOX) {
+		return Iterate(in_data, (c.H + kBlock - 1) / kBlock, &c, NoThrow<BoxPass<P>>);
+	}
 
 	// output columns whose horizontal reach can touch the input at all:
 	// left of the input only via Expand Left, right of it only via Expand Right
@@ -678,6 +753,9 @@ PF_Err ParamsSetup(PF_InData *in_data, PF_OutData *out_data)
 	AEFX_CLR_STRUCT(def);
 	PF_END_TOPIC(SQ_LICENSE_END);
 
+	AEFX_CLR_STRUCT(def);
+	PF_ADD_POPUP("Extend From", 2, EXTEND_FROM_BOUNDING_BOX, "Bounding Box|Alpha", SQ_EXTEND_FROM);
+
 	out_data->num_params = SQ_NUM_PARAMS;
 	return err;
 }
@@ -686,14 +764,16 @@ PF_Err ReadParams(PF_InData *in_data, Params *p)
 {
 	PF_Err err = PF_Err_NONE, err2 = PF_Err_NONE;
 	PF_ParamDef v[SQ_NUM_PARAMS];
+	auto isValue = [](A_long i) { return i != SQ_LICENSE_START && i != SQ_LICENSE_END; };
 
-	for (A_long i = SQ_EXPAND_RIGHT; i <= SQ_EXPAND_BOUNDS && !err; ++i) {
+	for (A_long i = SQ_EXPAND_RIGHT; i < SQ_NUM_PARAMS && !err; ++i) {
+		if (!isValue(i)) continue;
 		AEFX_CLR_STRUCT(v[i]);
 		err = PF_CHECKOUT_PARAM(in_data, i, in_data->current_time, in_data->time_step,
 			in_data->time_scale, &v[i]);
 		if (err) {
 			for (A_long j = SQ_EXPAND_RIGHT; j < i; ++j) {
-				ERR2(PF_CHECKIN_PARAM(in_data, &v[j]));
+				if (isValue(j)) ERR2(PF_CHECKIN_PARAM(in_data, &v[j]));
 			}
 			return err;
 		}
@@ -714,9 +794,10 @@ PF_Err ReadParams(PF_InData *in_data, Params *p)
 	p->output		= v[SQ_OUTPUT].u.pd.value;
 	p->opaqueFill	= v[SQ_OPAQUE_FILL].u.bd.value != 0;
 	p->expandBounds	= v[SQ_EXPAND_BOUNDS].u.bd.value != 0;
+	p->extendFrom	= v[SQ_EXTEND_FROM].u.pd.value;
 
-	for (A_long i = SQ_EXPAND_RIGHT; i <= SQ_EXPAND_BOUNDS; ++i) {
-		ERR2(PF_CHECKIN_PARAM(in_data, &v[i]));
+	for (A_long i = SQ_EXPAND_RIGHT; i < SQ_NUM_PARAMS; ++i) {
+		if (isValue(i)) ERR2(PF_CHECKIN_PARAM(in_data, &v[i]));
 	}
 	return err2;
 }
@@ -756,6 +837,7 @@ PF_Err PreRender(PF_InData *in_data, PF_OutData * /*out_data*/, PF_PreRenderExtr
 
 	rd->inRect = in_result.result_rect;
 	rd->outRect = result;
+	rd->boxRect = in_result.max_result_rect;
 
 	extra->output->result_rect = result;
 	extra->output->max_result_rect = maxRect;

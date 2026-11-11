@@ -11,12 +11,12 @@
 #define SQ_LICENSE         "(C) 2026 Sqkurq"
 
 #define SQ_MAJOR_VERSION   1
-#define SQ_MINOR_VERSION   1
+#define SQ_MINOR_VERSION   2
 #define SQ_BUG_VERSION     0
 #define SQ_BUILD_VERSION   1
 
-// PF_VERSION(1, 1, 0, PF_Stage_RELEASE, 1)
-#define SQ_PIPL_VERSION    558593
+// PF_VERSION(1, 2, 0, PF_Stage_RELEASE, 1)
+#define SQ_PIPL_VERSION    591361
 
 // PF_OutFlag_DEEP_COLOR_AWARE | PF_OutFlag_I_EXPAND_BUFFER
 #define SQ_OUTFLAGS        0x02000200
